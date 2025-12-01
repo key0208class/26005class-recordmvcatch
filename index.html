@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>🏆 終點判讀系統 Pro v1.5.0</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        gray: { 900: '#0f172a', 800: '#1e293b', 700: '#334155' },
+                        accent: { green: '#10b981', red: '#f43f5e', blue: '#3b82f6' }
+                    },
+                    fontFamily: {
+                        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+                    },
+                    animation: {
+                        'fade-in': 'fadeIn 0.3s ease-out',
+                    },
+                    keyframes: {
+                        fadeIn: {
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        .control-panel-z { z-index: 50; }
+        
+        .custom-scrollbar {
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch; 
+        }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+
+        #detection-zone {
+            box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.8), inset 0 0 20px rgba(239, 68, 68, 0.3);
+            z-index: 30;
+            touch-action: none;
+        }
+        #detection-zone.active {
+            box-shadow: 0 0 0 4px #fbbf24, inset 0 0 30px rgba(251, 191, 36, 0.5);
+            background-color: rgba(251, 191, 36, 0.2);
+        }
+        
+        button:active { transform: scale(0.95); }
+
+        .grab-cursor { cursor: grab; }
+        .grabbing-cursor { cursor: grabbing; }
+
+        /* 進度條樣式優化 */
+        input[type=range].video-slider {
+            -webkit-appearance: none;
+            background: transparent;
+        }
+        input[type=range].video-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #3b82f6;
+            margin-top: -6px;
+            box-shadow: 0 0 0 2px white; 
+            cursor: pointer;
+        }
+        input[type=range].video-slider::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #475569;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white h-[100dvh] flex flex-col overflow-hidden selection:bg-accent-blue selection:text-white">
+
+    <canvas id="proc-canvas" class="hidden"></canvas>
+
+    <section id="monitor-area" class="relative w-full bg-black border-b-2 border-gray-700 flex-shrink-0 group" style="height: 45%;">
+        <div class="relative w-full h-full flex justify-center items-center overflow-hidden bg-gray-900">
+            <div id="camera-loading" class="absolute text-gray-500 flex flex-col items-center animate-pulse">
+                <i class="fa-solid fa-camera text-3xl mb-2"></i>
+                <span>啟動相機中...</span>
+            </div>
+
+            <video id="live-video" class="h-full w-auto max-w-full object-contain relative z-10" autoplay muted playsinline></video>
+            <video id="replay-video" class="h-full w-auto max-w-full object-contain hidden relative z-20" playsinline></video>
+
+            <div id="detection-zone" class="absolute cursor-move rounded-sm" style="top: 10%; left: 45%; width: 10%; height: 80%;">
+                <div id="resize-handle" class="absolute bottom-0 right-0 w-8 h-8 bg-red-500 rounded-tl-full cursor-se-resize flex items-end justify-end p-1">
+                    <i class="fa-solid fa-arrows-up-down-left-right text-white text-[8px]"></i>
+                </div>
+            </div>
+
+            <div class="absolute top-2 right-2 bg-gray-900/80 px-3 py-1 rounded border border-gray-700 pointer-events-none z-40 shadow-lg">
+                <span id="overlay-timer" class="text-3xl font-bold text-accent-green font-mono tracking-wider">00"00</span>
+            </div>
+
+            <div class="absolute top-2 left-2 px-2 py-1 rounded bg-gray-800/90 text-xs font-bold text-gray-400 border border-gray-600 z-40 flex items-center gap-2 shadow-lg">
+                <div id="status-dot" class="w-2 h-2 rounded-full bg-gray-500"></div>
+                <span id="status-text">SYSTEM READY</span>
+            </div>
+
+            <div id="replay-controls" class="absolute bottom-0 left-0 w-full bg-gray-900/90 backdrop-blur px-4 py-3 flex items-center gap-4 z-50 hidden transition-opacity duration-300 border-t border-gray-700">
+                <button id="btn-video-play" class="w-8 h-8 flex items-center justify-center bg-accent-blue rounded-full text-white shadow hover:bg-blue-400 active:scale-90 transition-all">
+                    <i class="fa-solid fa-pause" id="icon-play-pause"></i>
+                </button>
+                
+                <div class="flex-1 flex flex-col justify-center">
+                    <input type="range" id="video-slider" class="video-slider w-full h-4 bg-transparent appearance-none cursor-pointer focus:outline-none" value="0" step="0.01" min="0" max="100">
+                </div>
+                
+                <span id="video-time-display" class="font-mono text-xs text-gray-300 whitespace-nowrap w-24 text-right">0.00 / 0.00</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="flex-1 flex flex-col bg-gray-800 overflow-hidden relative z-50">
+        <div class="p-3 bg-gray-800 border-b border-gray-700 shadow-xl control-panel-z flex-shrink-0">
+            <div class="grid grid-cols-2 gap-3 mb-2">
+                <button id="btn-start" class="bg-accent-green hover:bg-emerald-500 text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all">
+                    <i class="fa-solid fa-person-running text-xl"></i> 
+                    <span class="text-lg">槍響開始</span>
+                </button>
+                <button id="btn-stop" disabled class="bg-gray-600 text-gray-400 font-bold py-3 rounded-lg cursor-not-allowed flex items-center justify-center gap-2 transition-all">
+                    <i class="fa-solid fa-flag-checkered text-xl"></i> 
+                    <span class="text-lg">比賽結束</span>
+                </button>
+            </div>
+            
+            <button id="btn-reset" class="w-full bg-amber-500 hover:bg-amber-400 text-black font-bold py-2 rounded-lg hidden mb-2 shadow-md transition-colors">
+                <i class="fa-solid fa-rotate-right"></i> 放棄並開始下一場
+            </button>
+
+            <div class="bg-gray-900/50 rounded p-2 text-sm border border-gray-700">
+                <div class="flex justify-between items-center cursor-pointer select-none hover:text-white transition-colors" id="settings-toggle">
+                    <span class="text-gray-400 font-bold"><i class="fa-solid fa-sliders"></i> 參數調教</span>
+                    <i class="fa-solid fa-chevron-down text-gray-500 transition-transform" id="settings-arrow"></i>
+                </div>
+                <div id="settings-panel" class="mt-2 space-y-3 hidden border-t border-gray-700 pt-2 animate-fade-in">
+                    <div class="flex items-center gap-2">
+                        <span class="text-gray-400 w-14 text-xs">靈敏度</span>
+                        <input type="range" id="sense-range" min="5" max="80" value="25" class="flex-1 h-2 bg-gray-600 rounded-lg appearance-none accent-blue-500 cursor-pointer hover:bg-gray-500">
+                        <span id="sense-val" class="text-blue-400 font-mono w-6 text-right">25</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-gray-400 w-14 text-xs">冷卻時間</span>
+                        <input type="range" id="cooldown-range" min="0" max="1000" step="50" value="150" class="flex-1 h-2 bg-gray-600 rounded-lg appearance-none accent-purple-500 cursor-pointer hover:bg-gray-500">
+                        <span id="cooldown-val" class="text-purple-400 font-mono w-10 text-right">0.15s</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex-1 custom-scrollbar p-2 relative bg-gray-800" id="list-container">
+            <div id="empty-state" class="h-full flex flex-col items-center justify-center text-gray-500 opacity-50 mt-4">
+                <i class="fa-solid fa-list-ol text-4xl mb-2"></i>
+                <p class="text-sm">準備就緒，等待信號</p>
+                <p class="text-xs text-gray-600 mt-1">重新整理頁面可保留成績與截圖</p>
+            </div>
+            <ul id="results-list" class="space-y-2 pb-16"></ul>
+        </div>
+    </section>
+
+    <div id="image-modal" class="fixed inset-0 bg-black/95 z-[100] hidden flex flex-col opacity-0 transition-opacity duration-200 backdrop-blur-sm">
+        <div class="flex justify-between items-center p-4 bg-gray-900/90 border-b border-gray-800 z-50 shadow-lg">
+            <div class="flex items-center gap-2">
+                <span class="text-accent-green font-mono text-xl font-bold" id="modal-time-display">--"--</span>
+                <span class="text-gray-500 text-xs border border-gray-600 px-1 rounded">SNAPSHOT</span>
+            </div>
+            <div class="flex gap-3">
+                <button id="btn-reset-view" class="text-xs bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded transition-colors">
+                    <i class="fa-solid fa-compress"></i> 重置視角
+                </button>
+                <button id="btn-close-modal" class="text-white text-2xl w-8 h-8 flex items-center justify-center rounded hover:bg-gray-800 transition-colors">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+        </div>
+        
+        <div class="flex-1 flex items-center justify-center overflow-hidden relative w-full h-full touch-none bg-gray-900" id="modal-img-container">
+            <img id="modal-img" src="" class="max-w-full max-h-full object-contain select-none grab-cursor shadow-2xl transition-transform duration-75 ease-linear" draggable="false">
+        </div>
+
+        <div class="p-4 bg-gray-900 border-t border-gray-800 flex items-center gap-4 z-50 pb-8 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.3)]">
+            <i class="fa-solid fa-magnifying-glass-minus text-gray-500"></i>
+            <input type="range" id="zoom-range" min="1" max="8" step="0.1" value="1" class="flex-1 h-4 bg-gray-700 rounded-lg appearance-none accent-accent-blue cursor-pointer hover:bg-gray-600">
+            <i class="fa-solid fa-magnifying-glass-plus text-white"></i>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // === 全域狀態管理 ===
+            const APP = {
+                config: {
+                    sensitivity: 25,
+                    cooldown: 150
+                },
+                state: {
+                    isRunning: false,
+                    startTime: 0,
+                    lastTrigger: 0,
+                    recordCount: 0,
+                    stream: null,
+                    mediaRecorder: null,
+                    chunks: [],
+                    blobUrl: null,
+                    rafId: null,
+                    lastFrame: null,
+                    records: [],
+                    // 圖片檢視器狀態
+                    imgView: {
+                        scale: 1,
+                        panning: false,
+                        pointX: 0,
+                        pointY: 0,
+                        startX: 0,
+                        startY: 0,
+                        startDist: 0,
+                        startScale: 1
+                    },
+                    // 🎥 影片回放狀態
+                    replay: {
+                        isDragging: false
+                    }
+                },
+                els: {
+                    liveVideo: document.getElementById('live-video'),
+                    replayVideo: document.getElementById('replay-video'),
+                    timer: document.getElementById('overlay-timer'),
+                    zone: document.getElementById('detection-zone'),
+                    handle: document.getElementById('resize-handle'),
+                    list: document.getElementById('results-list'),
+                    emptyState: document.getElementById('empty-state'),
+                    startBtn: document.getElementById('btn-start'),
+                    stopBtn: document.getElementById('btn-stop'),
+                    resetBtn: document.getElementById('btn-reset'),
+                    canvas: document.getElementById('proc-canvas'),
+                    ctx: document.getElementById('proc-canvas').getContext('2d', { willReadFrequently: true }),
+                    statusText: document.getElementById('status-text'),
+                    statusDot: document.getElementById('status-dot'),
+                    loading: document.getElementById('camera-loading'),
+                    // Settings
+                    settingsToggle: document.getElementById('settings-toggle'),
+                    settingsPanel: document.getElementById('settings-panel'),
+                    settingsArrow: document.getElementById('settings-arrow'),
+                    senseRange: document.getElementById('sense-range'),
+                    coolRange: document.getElementById('cooldown-range'),
+                    senseVal: document.getElementById('sense-val'),
+                    coolVal: document.getElementById('cooldown-val'),
+                    // Modal
+                    modal: document.getElementById('image-modal'),
+                    modalImg: document.getElementById('modal-img'),
+                    modalContainer: document.getElementById('modal-img-container'),
+                    modalTime: document.getElementById('modal-time-display'),
+                    closeModalBtn: document.getElementById('btn-close-modal'),
+                    resetViewBtn: document.getElementById('btn-reset-view'),
+                    zoomRange: document.getElementById('zoom-range'),
+                    // 🆕 Video Controls
+                    replayControls: document.getElementById('replay-controls'),
+                    videoPlayBtn: document.getElementById('btn-video-play'),
+                    videoPlayIcon: document.getElementById('icon-play-pause'),
+                    videoSlider: document.getElementById('video-slider'),
+                    videoTimeDisplay: document.getElementById('video-time-display')
+                }
+            };
+
+            // === 1. 初始化 ===
+            async function initSystem() {
+                loadRecords();
+                window.addEventListener('beforeunload', (e) => {
+                    if (APP.state.records.length > 0 && !APP.state.blobUrl) {
+                        e.preventDefault();
+                        e.returnValue = '';
+                    }
+                });
+
+                try {
+                    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                        throw new Error("瀏覽器不支援或未在安全環境(https/localhost)下執行");
+                    }
+                    
+                    APP.state.stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+                        audio: false
+                    });
+
+                    APP.els.liveVideo.srcObject = APP.state.stream;
+                    APP.els.loading.classList.add('hidden');
+                    
+                    APP.els.liveVideo.onloadedmetadata = () => {
+                        APP.els.canvas.width = APP.els.liveVideo.videoWidth;
+                        APP.els.canvas.height = APP.els.liveVideo.videoHeight;
+                    };
+                } catch (err) {
+                    APP.els.loading.innerHTML = `<span class="text-red-500 font-bold">相機錯誤: ${err.message}</span>`;
+                    APP.els.startBtn.disabled = true;
+                    APP.els.startBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                    alert("相機啟動失敗：" + err.message);
+                }
+            }
+
+            // === 2. 錄影與計時 ===
+            
+            APP.els.startBtn.addEventListener('click', () => {
+                if (!APP.state.stream) return alert("相機尚未就緒");
+
+                APP.els.startBtn.classList.add('hidden');
+                APP.els.stopBtn.disabled = false;
+                APP.els.stopBtn.classList.remove('cursor-not-allowed', 'bg-gray-600', 'text-gray-400');
+                APP.els.stopBtn.classList.add('bg-accent-red', 'text-white', 'hover:bg-rose-600');
+                APP.els.resetBtn.classList.add('hidden');
+                APP.els.replayControls.classList.add('hidden'); // 確保控制列隱藏
+                
+                APP.els.statusText.textContent = "RECORDING";
+                APP.els.statusText.classList.add('text-red-400');
+                APP.els.statusDot.classList.replace('bg-gray-500', 'bg-red-500');
+                APP.els.statusDot.classList.add('animate-pulse');
+                
+                clearRecords();
+                APP.state.chunks = [];
+                
+                try {
+                    const mimeTypes = ['video/webm;codecs=vp9', 'video/webm', 'video/mp4'];
+                    let selectedMime = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || '';
+                    APP.state.mediaRecorder = new MediaRecorder(APP.state.stream, { mimeType: selectedMime });
+                    APP.state.mediaRecorder.ondataavailable = e => {
+                        if (e.data.size > 0) APP.state.chunks.push(e.data);
+                    };
+                    APP.state.mediaRecorder.start();
+                } catch (e) {
+                    console.error("MediaRecorder Error:", e);
+                    alert("錄影功能啟動失敗");
+                }
+
+                APP.state.startTime = performance.now();
+                APP.state.isRunning = true;
+                APP.state.recordCount = 0;
+                APP.state.lastTrigger = 0;
+                requestAnimationFrame(loop);
+            });
+
+            APP.els.stopBtn.addEventListener('click', () => {
+                APP.state.isRunning = false;
+                cancelAnimationFrame(APP.state.rafId);
+
+                if (APP.state.mediaRecorder && APP.state.mediaRecorder.state !== 'inactive') {
+                    APP.state.mediaRecorder.stop();
+                    APP.state.mediaRecorder.onstop = prepareReplayVideo;
+                }
+
+                APP.els.stopBtn.disabled = true;
+                APP.els.stopBtn.classList.add('hidden');
+                APP.els.resetBtn.classList.remove('hidden');
+                
+                APP.els.statusText.textContent = "REVIEW MODE";
+                APP.els.statusText.classList.remove('text-red-400');
+                APP.els.statusText.classList.add('text-blue-400');
+                APP.els.statusDot.classList.remove('animate-pulse', 'bg-red-500');
+                APP.els.statusDot.classList.add('bg-blue-500');
+            });
+
+            APP.els.resetBtn.addEventListener('click', () => {
+                if(confirm("確定要放棄本場影片，開始下一場嗎？")) {
+                    if (APP.state.blobUrl) URL.revokeObjectURL(APP.state.blobUrl);
+                    APP.state.blobUrl = null;
+                    
+                    APP.els.liveVideo.classList.remove('hidden');
+                    APP.els.replayVideo.classList.add('hidden');
+                    APP.els.replayControls.classList.add('hidden'); // 隱藏控制列
+                    APP.els.replayVideo.pause();
+                    
+                    APP.els.startBtn.classList.remove('hidden');
+                    APP.els.stopBtn.classList.remove('hidden', 'bg-accent-red', 'text-white', 'hover:bg-rose-600');
+                    APP.els.stopBtn.classList.add('cursor-not-allowed', 'bg-gray-600', 'text-gray-400');
+                    APP.els.resetBtn.classList.add('hidden');
+                    
+                    APP.els.timer.textContent = '00"00';
+                    APP.els.timer.classList.remove('text-blue-400');
+                    APP.els.timer.classList.add('text-accent-green');
+                    APP.els.statusText.textContent = "READY";
+                    APP.els.statusDot.classList.replace('bg-blue-500', 'bg-gray-500');
+                    
+                    clearRecords();
+                }
+            });
+
+            function loop() {
+                if (!APP.state.isRunning) return;
+                
+                const now = performance.now();
+                const elapsed = now - APP.state.startTime;
+                APP.els.timer.textContent = formatTime(elapsed);
+                
+                processFrame(now, elapsed);
+                APP.state.rafId = requestAnimationFrame(loop);
+            }
+
+            function processFrame(now, elapsed) {
+                APP.els.ctx.drawImage(APP.els.liveVideo, 0, 0, APP.els.canvas.width, APP.els.canvas.height);
+
+                const zoneRect = APP.els.zone.getBoundingClientRect();
+                const videoRect = APP.els.liveVideo.getBoundingClientRect();
+                const scaleX = APP.els.canvas.width / videoRect.width;
+                const scaleY = APP.els.canvas.height / videoRect.height;
+                const sx = (zoneRect.left - videoRect.left) * scaleX;
+                const sy = (zoneRect.top - videoRect.top) * scaleY;
+                const sw = zoneRect.width * scaleX;
+                const sh = zoneRect.height * scaleY;
+
+                if (sw <= 0 || sh <= 0) return;
+
+                const frameData = APP.els.ctx.getImageData(sx, sy, sw, sh);
+
+                if (APP.state.lastFrame && (now - APP.state.lastTrigger > APP.config.cooldown)) {
+                    let diff = 0;
+                    const len = frameData.data.length;
+                    for (let i = 0; i < len; i += 16) {
+                        if (Math.abs(frameData.data[i+1] - APP.state.lastFrame.data[i+1]) > 30) diff++;
+                    }
+                    if (diff > APP.config.sensitivity * (sw * sh / 20000)) {
+                        triggerFound(elapsed);
+                        APP.state.lastTrigger = now;
+                    }
+                }
+                APP.state.lastFrame = frameData;
+            }
+
+            function triggerFound(ms) {
+                APP.state.recordCount++;
+                const timeStr = formatTime(ms);
+                const videoTime = ms / 1000;
+
+                const snapCanvas = document.createElement('canvas');
+                const ratio = APP.els.canvas.height / APP.els.canvas.width;
+                snapCanvas.width = 800; 
+                snapCanvas.height = 800 * ratio;
+                snapCanvas.getContext('2d').drawImage(APP.els.liveVideo, 0, 0, snapCanvas.width, snapCanvas.height);
+                
+                const record = {
+                    id: Date.now(),
+                    rank: APP.state.recordCount,
+                    timeStr: timeStr,
+                    videoTime: videoTime,
+                    imgSrc: snapCanvas.toDataURL('image/jpeg', 0.7)
+                };
+
+                APP.state.records.push(record);
+                saveRecords();
+                renderRecord(record);
+
+                APP.els.zone.classList.add('active');
+                setTimeout(() => APP.els.zone.classList.remove('active'), 100);
+            }
+
+            // === 3. 列表管理 ===
+            function renderRecord(rec) {
+                if (APP.els.list.children.length === 0 || APP.els.emptyState) APP.els.emptyState.classList.add('hidden');
+                const li = document.createElement('li');
+                li.className = "bg-gray-700/50 p-3 rounded-lg border border-gray-600 flex justify-between items-center animate-fade-in";
+                li.id = `rec-${rec.id}`;
+                li.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <span class="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center text-sm font-bold text-gray-300 shadow-inner">#${rec.rank}</span>
+                        <button class="text-2xl font-mono font-bold text-white hover:text-accent-blue transition-colors" onclick="APP.playReplay(${rec.videoTime})">
+                            ${rec.timeStr}
+                        </button>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="w-10 h-10 rounded bg-gray-600 hover:bg-gray-500 text-white shadow flex items-center justify-center active:scale-90" onclick="APP.openSnapshot(${rec.id})">
+                            <i class="fa-solid fa-image"></i>
+                        </button>
+                        <button class="w-10 h-10 rounded bg-gray-800 text-gray-500 hover:text-red-400 hover:bg-gray-700 shadow flex items-center justify-center transition-colors" onclick="APP.deleteRecord(${rec.id})">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                `;
+                APP.els.list.prepend(li);
+            }
+
+            function saveRecords() { try { localStorage.setItem('race_data_v5', JSON.stringify(APP.state.records)); } catch (e) {} }
+            function loadRecords() {
+                const data = localStorage.getItem('race_data_v5');
+                if (data) {
+                    try {
+                        APP.state.records = JSON.parse(data);
+                        if (APP.state.records.length > 0) {
+                            APP.state.recordCount = APP.state.records[APP.state.records.length-1].rank;
+                            APP.els.emptyState.classList.add('hidden');
+                            APP.state.records.forEach(rec => renderRecord(rec));
+                            APP.els.statusText.textContent = "DATA RESTORED";
+                            APP.els.startBtn.classList.add('hidden');
+                            APP.els.resetBtn.classList.remove('hidden');
+                        }
+                    } catch(e) {}
+                }
+            }
+            function clearRecords() {
+                APP.state.records = [];
+                localStorage.removeItem('race_data_v5');
+                APP.els.list.innerHTML = '';
+                APP.els.emptyState.classList.remove('hidden');
+            }
+
+            // === 4. 🎥 影片回放控制系統 (v1.5.0 新增) ===
+            
+            function prepareReplayVideo() {
+                const blob = new Blob(APP.state.chunks, { type: 'video/webm' });
+                APP.state.blobUrl = URL.createObjectURL(blob);
+                APP.els.replayVideo.src = APP.state.blobUrl;
+                
+                // 重置滑桿
+                APP.els.videoSlider.value = 0;
+                
+                // 當影片元數據加載後設定最大值
+                APP.els.replayVideo.onloadedmetadata = () => {
+                    if(APP.els.replayVideo.duration !== Infinity) {
+                        APP.els.videoSlider.max = APP.els.replayVideo.duration;
+                        updateTimeDisplay();
+                    }
+                };
+                
+                // 處理 MediaRecorder Infinity Duration 問題 (Chrome Bug)
+                // 透過延遲獲取時間，或當播放時修正 max
+                APP.els.replayVideo.ondurationchange = () => {
+                    if(APP.els.replayVideo.duration !== Infinity) {
+                        APP.els.videoSlider.max = APP.els.replayVideo.duration;
+                    }
+                };
+
+                // 監聽播放更新
+                APP.els.replayVideo.addEventListener('timeupdate', () => {
+                    // 只有在非拖曳狀態下才更新滑桿
+                    if (!APP.state.replay.isDragging) {
+                        APP.els.videoSlider.value = APP.els.replayVideo.currentTime;
+                        updateTimeDisplay();
+                    }
+                    
+                    // 同步更新右上角大計時器
+                    if (!APP.els.replayVideo.classList.contains('hidden')) {
+                        APP.els.timer.textContent = formatTime(APP.els.replayVideo.currentTime * 1000);
+                    }
+                });
+
+                // 監聽播放結束
+                APP.els.replayVideo.addEventListener('ended', () => {
+                    APP.els.videoPlayIcon.classList.replace('fa-pause', 'fa-play');
+                });
+            }
+
+            function updateTimeDisplay() {
+                const curr = APP.els.replayVideo.currentTime || 0;
+                const dur = APP.els.replayVideo.duration;
+                // 如果 duration 是 Infinity，暫時顯示當前時間
+                const durText = (isFinite(dur) && dur > 0) ? dur.toFixed(2) : "--";
+                APP.els.videoTimeDisplay.textContent = `${curr.toFixed(2)} / ${durText}`;
+            }
+
+            // 控制列按鈕事件
+            APP.els.videoPlayBtn.addEventListener('click', () => {
+                if (APP.els.replayVideo.paused) {
+                    APP.els.replayVideo.play();
+                    APP.els.videoPlayIcon.classList.replace('fa-play', 'fa-pause');
+                } else {
+                    APP.els.replayVideo.pause();
+                    APP.els.videoPlayIcon.classList.replace('fa-pause', 'fa-play');
+                }
+            });
+
+            // 滑桿互動邏輯
+            APP.els.videoSlider.addEventListener('input', (e) => {
+                // 拖曳時即時更新畫面，讓使用者看到定格
+                APP.els.replayVideo.currentTime = parseFloat(e.target.value);
+                updateTimeDisplay();
+                APP.els.timer.textContent = formatTime(APP.els.replayVideo.currentTime * 1000);
+            });
+
+            // 開始拖曳：暫停影片
+            const startSeek = () => {
+                APP.state.replay.isDragging = true;
+                APP.els.replayVideo.pause();
+                APP.els.videoPlayIcon.classList.replace('fa-pause', 'fa-play');
+            };
+
+            // 結束拖曳：保持暫停，等待使用者點擊播放 (符合需求)
+            const endSeek = () => {
+                APP.state.replay.isDragging = false;
+                // 這裡不自動 play，因為需求說「可以點擊播放繼續播」
+            };
+
+            APP.els.videoSlider.addEventListener('mousedown', startSeek);
+            APP.els.videoSlider.addEventListener('touchstart', startSeek);
+
+            APP.els.videoSlider.addEventListener('mouseup', endSeek);
+            APP.els.videoSlider.addEventListener('touchend', endSeek);
+
+
+            // 全域 APP 功能
+            window.APP = {
+                playReplay: (sec) => {
+                    if (!APP.state.blobUrl) {
+                        alert("影片已過期或頁面已刷新，無法回放影片，但截圖仍可查看。");
+                        return;
+                    }
+                    // 切換介面
+                    APP.els.liveVideo.classList.add('hidden');
+                    APP.els.replayVideo.classList.remove('hidden');
+                    APP.els.replayControls.classList.remove('hidden'); // 顯示控制列
+                    
+                    // 跳轉並播放
+                    const safeTime = Math.max(0, sec - 2);
+                    APP.els.replayVideo.currentTime = safeTime;
+                    APP.els.replayVideo.play();
+                    APP.els.videoPlayIcon.classList.replace('fa-play', 'fa-pause');
+
+                    // 視覺提示
+                    APP.els.timer.classList.remove('text-accent-green');
+                    APP.els.timer.classList.add('text-blue-400');
+
+                    // 移除之前的自動暫停，改為讓使用者自己控制
+                    // 但為了方便，如果使用者只是點擊列表，可以先不要全場播完
+                    // 這裡我們選擇：不自動暫停，因為有進度條可以拉了
+                },
+                openSnapshot: (id) => {
+                    const rec = APP.state.records.find(r => r.id === id);
+                    if (rec) {
+                        APP.els.modalImg.src = rec.imgSrc;
+                        APP.els.modalTime.textContent = rec.timeStr;
+                        resetImgView();
+                        APP.els.modal.classList.remove('hidden');
+                        requestAnimationFrame(() => APP.els.modal.classList.remove('opacity-0'));
+                    }
+                },
+                deleteRecord: (id) => {
+                    if(confirm("確定刪除此紀錄？")) {
+                        APP.state.records = APP.state.records.filter(r => r.id !== id);
+                        saveRecords();
+                        document.getElementById(`rec-${id}`)?.remove();
+                        if(APP.state.records.length === 0) APP.els.emptyState.classList.remove('hidden');
+                    }
+                }
+            };
+
+            // === 5. 🤚 圖片多點觸控縮放與拖曳 ===
+            function updateImgTransform() {
+                const { scale, pointX, pointY } = APP.state.imgView;
+                APP.els.modalImg.style.transform = `translate(${pointX}px, ${pointY}px) scale(${scale})`;
+                APP.els.zoomRange.value = scale;
+            }
+            function resetImgView() {
+                APP.state.imgView = { scale: 1, panning: false, pointX: 0, pointY: 0, startX: 0, startY: 0, startDist: 0, startScale: 1 };
+                updateImgTransform();
+                APP.els.modalImg.classList.remove('grabbing-cursor');
+            }
+            APP.els.zoomRange.addEventListener('input', (e) => {
+                APP.state.imgView.scale = parseFloat(e.target.value);
+                updateImgTransform();
+            });
+            APP.els.resetViewBtn.addEventListener('click', resetImgView);
+
+            function getDistance(touches) {
+                return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+            }
+            const imgEl = APP.els.modalImg;
+            const containerEl = APP.els.modalContainer;
+
+            function handleStart(e) {
+                if (e.touches && e.touches.length === 2) {
+                    e.preventDefault();
+                    APP.state.imgView.panning = false;
+                    APP.state.imgView.startDist = getDistance(e.touches);
+                    APP.state.imgView.startScale = APP.state.imgView.scale;
+                } else {
+                    e.preventDefault();
+                    APP.state.imgView.panning = true;
+                    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                    APP.state.imgView.startX = clientX - APP.state.imgView.pointX;
+                    APP.state.imgView.startY = clientY - APP.state.imgView.pointY;
+                    imgEl.classList.add('grabbing-cursor');
+                }
+            }
+            function handleMove(e) {
+                if (e.touches && e.touches.length === 2) {
+                    e.preventDefault();
+                    const currentDist = getDistance(e.touches);
+                    if (APP.state.imgView.startDist > 0) {
+                        const ratio = currentDist / APP.state.imgView.startDist;
+                        let newScale = APP.state.imgView.startScale * ratio;
+                        newScale = Math.max(1, Math.min(newScale, 8));
+                        APP.state.imgView.scale = newScale;
+                        updateImgTransform();
+                    }
+                } else if (APP.state.imgView.panning) {
+                    e.preventDefault();
+                    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                    APP.state.imgView.pointX = clientX - APP.state.imgView.startX;
+                    APP.state.imgView.pointY = clientY - APP.state.imgView.startY;
+                    updateImgTransform();
+                }
+            }
+            function handleEnd(e) {
+                if (e.touches && e.touches.length < 2) APP.state.imgView.startDist = 0;
+                if ((!e.touches && e.type === 'mouseup') || (e.touches && e.touches.length === 0)) {
+                    APP.state.imgView.panning = false;
+                    imgEl.classList.remove('grabbing-cursor');
+                }
+            }
+            imgEl.addEventListener('mousedown', handleStart);
+            containerEl.addEventListener('touchstart', handleStart, { passive: false });
+            window.addEventListener('mousemove', handleMove);
+            window.addEventListener('touchmove', handleMove, { passive: false });
+            window.addEventListener('mouseup', handleEnd);
+            window.addEventListener('touchend', handleEnd);
+
+            // === 6. 輔助功能 ===
+            function formatTime(ms) {
+                const s = Math.floor(ms / 1000);
+                const c = Math.floor((ms % 1000) / 10);
+                return `${s}"${String(c).padStart(2, '0')}`;
+            }
+
+            APP.els.closeModalBtn.addEventListener('click', () => {
+                APP.els.modal.classList.add('opacity-0');
+                setTimeout(() => APP.els.modal.classList.add('hidden'), 200);
+            });
+
+            APP.els.settingsToggle.addEventListener('click', () => {
+                APP.els.settingsPanel.classList.toggle('hidden');
+                APP.els.settingsArrow.classList.toggle('rotate-180');
+            });
+            APP.els.senseRange.addEventListener('input', (e) => {
+                APP.config.sensitivity = 105 - e.target.value;
+                APP.els.senseVal.textContent = e.target.value;
+            });
+            APP.els.coolRange.addEventListener('input', (e) => {
+                APP.config.cooldown = e.target.value;
+                APP.els.coolVal.textContent = (e.target.value/1000) + 's';
+            });
+
+            let drag = { active: false, type: '', startX: 0, startY: 0, initL: 0, initT: 0, initW: 0, initH: 0 };
+            const monitorArea = document.getElementById('monitor-area');
+            const startZoneDrag = (e) => {
+                if (!APP.els.modal.classList.contains('hidden')) return;
+                if (APP.state.isRunning) return;
+                
+                // 若點擊到下方的控制列，不觸發紅框拖曳
+                if (e.target.closest('#replay-controls')) return;
+
+                const p = e.touches ? e.touches[0] : e;
+                const target = document.elementFromPoint(p.clientX, p.clientY);
+                if (target === APP.els.handle || APP.els.zone.contains(target)) {
+                    drag.active = true;
+                    drag.type = (target === APP.els.handle || target.parentElement === APP.els.handle) ? 'resize' : 'move';
+                    drag.startX = p.clientX;
+                    drag.startY = p.clientY;
+                    drag.initL = APP.els.zone.offsetLeft;
+                    drag.initT = APP.els.zone.offsetTop;
+                    drag.initW = APP.els.zone.offsetWidth;
+                    drag.initH = APP.els.zone.offsetHeight;
+                    e.preventDefault();
+                }
+            };
+            const moveZoneDrag = (e) => {
+                if (!drag.active) return;
+                const p = e.touches ? e.touches[0] : e;
+                const dx = p.clientX - drag.startX;
+                const dy = p.clientY - drag.startY;
+                if (drag.type === 'move') {
+                    APP.els.zone.style.left = (drag.initL + dx) + 'px';
+                    APP.els.zone.style.top = (drag.initT + dy) + 'px';
+                } else {
+                    APP.els.zone.style.width = (drag.initW + dx) + 'px';
+                    APP.els.zone.style.height = (drag.initH + dy) + 'px';
+                }
+            };
+            const endZoneDrag = () => drag.active = false;
+            monitorArea.addEventListener('mousedown', startZoneDrag);
+            monitorArea.addEventListener('touchstart', startZoneDrag, { passive: false });
+            window.addEventListener('mousemove', moveZoneDrag);
+            window.addEventListener('touchmove', moveZoneDrag, { passive: false });
+            window.addEventListener('mouseup', endZoneDrag);
+            window.addEventListener('touchend', endZoneDrag);
+
+            initSystem();
+        });
+    </script>
+</body>
+</html>
